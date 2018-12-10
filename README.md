@@ -44,4 +44,5 @@ Both scripts require the OneView PowerShell library at least v4.1 : https://gith
     .\Generate-scripts.ps1 -OVApplianceIP <OV-IP-Address-of-the-master-OV> -OVAdminName <Admin-name> -OVAdminPassword <password> -OVAuthDomain <local or AD-domain>
 
 ```
-Scripts will be created under the folder Scripts
+Scripts will be created under the folder Scripts. One special script is created at the end and it's called all-in-one.ps1.
+The script gives you the exact sequence of scripts to be executed
