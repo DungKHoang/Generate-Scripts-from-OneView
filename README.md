@@ -3,7 +3,6 @@
 Generate-scripts.PS1 is a PowerShell script that generates PowwerShell code to configure new OneView instances. The script queries an existing OV instance (called 'Master') and based on resources and attributes configured in this instance, it will create scripts that call OV PowerShell library (POSH). Those scripts can then run against new OV instance to re-create the environment. 
 
 There are two categories of scripts
-
    * OV resources - those scripts are used to create OV resources including
         * Ethernet newtorks
         * Network set
@@ -21,7 +20,6 @@ There are two categories of scripts
         * SAN Storage connections
         * Server Profile Templates
         * Server Profiles
-
     * OV settings - the scripts are used to configure OV settings including  
         * Firmware SPP
         * Time and locale and NTP servers
