@@ -3,7 +3,7 @@
 Param ( [string]$OVApplianceIP                  = "", 
         [string]$OVAdminName                    = "", 
         [string]$OVAdminPassword                = "",
-        [string]$OVAuthDomain                   = "local",
+        [string]$OVAuthDomain                   = "",
         [string]$OneViewModule                  = "HPOneView.410"
 )
 
@@ -24,6 +24,13 @@ $Dot            = '.'
 $Underscore     = '_'
 
 $Syn12K                   = 'SY12000' # Synergy enclosure type
+
+$DriveTypeValues = @{
+    "SasHDD"  = "SAS";
+    "SataHDD" = "SATA";
+    "SASSSD"  = "SASSSD";
+    "SATASSD" = "SATASSD"
+}
 
 $HostOSList     = @{
     "Citrix Xen Server 5.x/6.x"             ="CitrixXen" ;
@@ -3086,18 +3093,21 @@ $requestedVFsParam    $mbpsParam $lagParam $bootableParam
 
 ## -------------------------------------------------------------------------------------------------------------
 ##
-##                     Function Generate-LocalStorageController-Script
+##                     Function Generate-LocalStorage-Script
 ##
 ## -------------------------------------------------------------------------------------------------------------
 
-Function Generate-LocalStorageController-Script 
+Function Generate-LocalStorage-Script 
 {
-    Param ( $listofControllers)
+    Param ( $list)
 
     $ScriptController        = @()
     $ControllerArray         = @()
     $controllerParam         = ""
     $i                       = 1
+    $listofControllers       = $list.controllers
+    $listofSASJBODs          = $list.sasLogicalJBODs
+
     foreach ($cont in $listofControllers)
     {
         $deviceSlot          = $cont.deviceSlot
@@ -3106,33 +3116,60 @@ Function Generate-LocalStorageController-Script
         $importConfiguration = if ($cont.importConfiguration) {1} else {0}
         $logicalDrives       = $cont.logicalDrives
 
-                      
-        $elementArray        = @()
-        $logicalDriveCode    =   ""
-        foreach ($ld in $logicalDrives)
-        {
-            $name            = $ld.name
-            $raidLevel       = $ld.raidLevel
-            $bootable         = if ($ld.bootable) {1} else {0} 
-            $numPhysDrives   = $ld.numPhysicalDrives
-            $driveTechnology = $ld.driveTechnology
-            $sasLogJBODId    = $ld.sasLogicalJBODId
-            $driveNumber     = $ld.driveNumber
+         ###
+         $elementArray        = @()
+         $logicalDriveCode    =   ""
 
-            $logicalDriveCode += @"
+        if ($logicalDrives)
+        {             
+            foreach ($ld in $logicalDrives )
+            {
+                
+                $raidLevel        = $ld.raidLevel
+                $bootable         = if ($ld.bootable) {1} else {0} 
+                $sasLogJBODId     = $ld.sasLogicalJBODId
+                $driveNumber      = $sasLogJBODId  
+                $accelerator      = $ld.accelerator
+                
+                 ## BIG ASUMPTION HERE
+                 $driveSelection  = 'SizeAndTechnology'
+
+                # Get Ld attributes from SASlogJBOD
+                $thisld           = $listofSASJBODs | where Id -match  $sasLogJBODId             
+                    $name            = $thisld.name
+                    $numPhysDrives   = $thisld.numPhysicalDrives
+                    $driveMinSizeGB  = $thisld.driveMinSizeGB 
+                    $driveMaxSizeGB  = $thisld.driveMaxSizeGB 
+                    $driveTechnology = $DriveTypeValues[$thisld.driveTechnology]
+                    $eraseData       = if ($thisld.eraseData) {1} else {0} 
+
+                $logicalDriveCode += @"
 `$name                  = '$name'
 `$bootable              = [Boolean]$bootable
 `$raidLevel             = '$raidLevel'
 `$numPhysDrives         = $numPhysDrives
+`$driveMinSizeGB        = $driveMinSizeGB
+`$driveMaxSizeGB        = $driveMaxSizeGB
 `$driveTechnology       = '$driveTechnology'
+`$driveSelection        = '$driveSelection'
+`$eraseData             = [Boolean]$eraseData
+
+
       
-`$ld$driveNumber        =  New-HPOVServerProfileLogicalDisk -Name `$name -raid `$raidLevel ``
--bootable `$bootable -numberofDrives `$numPhysDrives -driveType `$driveTechnology 
+`$ld$driveNumber        =  New-HPOVServerProfileLogicalDisk -Name `$name -raid `$raidLevel -bootable `$bootable ``
+-driveType `$driveTechnology  -driveSelection `$driveSelection -eraseDataonDelete `$eraseData  ``
+ -numberofDrives `$numPhysDrives  -MinDriveSize `$driveMinSizeGB -MaxDriveSize `$driveMaxSizeGB 
 
 "@
 
-            $elementArray     += "`$ld$driveNumber" 
+                $elementArray     += "`$ld$driveNumber" 
+            }
         }
+        else # if logicalDrives is NULL, check in SASLogicalJBod for JBOD 
+        {
+     ###TBD
+        }
+
 
         if ( $importConfig -and ($deviceSlot -notlike 'Mezz*') )
         {
@@ -3163,8 +3200,8 @@ $logicalDriveCode
 
     $ScriptController    += @"
 # ----------- Local Storage Controller '$deviceSlot' Attributes
-`$deviceSlot            = '$deviceSlot'
-`$mode                  = '$mode'
+`$deviceSlot            = '$deviceSlot'          
+`$mode                  = 'RAID'            # Temporarily set to RAID. Query retruns in variable `$mode  which is set to mixed               
 `$initialize            = [Boolean]$initialize
 $diskControllerCode
 "@
@@ -3345,11 +3382,11 @@ Function Generate-Profile-Script ( $List ,$outFile)
             # ------- Local Storage Connections
 
             $LOCALStorageCode                   = $LOCALStorageParam = ''
-            $ListofControllers                  = $SPT.localStorage.controllers
-            if ($listofControllers)
+            $ListoflocalStorage                 = $SPT.localStorage
+            if ($ListoflocalStorage )
             {
-                $LOCALStorageCode, $varstr      = Generate-LocalStorageController-Script -listofControllers $listofControllers
-                $LOCALStorageParam              = " -LocalStorage `$true -StorageController `$$varstr " 
+                $LOCALStorageCode, $varstr      = Generate-LocalStorage-Script -list  $listoflocalStorage
+                $LOCALStorageParam              = " -LocalStorage:`$true -StorageController `$$varstr " 
             }
 
             # ---------- SAN storage Connection
@@ -3676,14 +3713,13 @@ Function Generate-ProfileTemplate-Script ( $List ,$outFile)
         }
 
             
-
         # ------- Local Storage Connections
 
         $LOCALStorageCode                   = $LOCALStorageParam = ''
-        $ListofControllers                  = $SPT.localStorage.controllers
-        if ($listofControllers)
+        $ListoflocalStorage                 = $SPT.localStorage
+        if ($ListoflocalStorage )
         {
-            $LOCALStorageCode, $varstr      = Generate-LocalStorageController-Script -listofControllers $listofControllers
+            $LOCALStorageCode, $varstr      = Generate-LocalStorage-Script -list  $listoflocalStorage
             $LOCALStorageParam              = " -LocalStorage:`$true -StorageController `$$varstr " 
         }
 
