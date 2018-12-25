@@ -3104,7 +3104,7 @@ Function Generate-LocalStorage-Script
     $ScriptController        = @()
     $ControllerArray         = @()
     $controllerParam         = ""
-    $i                       = 1
+    $i                       = 100    # This is just for embeddded drive so uses  count down to avoid interfering with logical disks created externally 
     $listofControllers       = $list.controllers
     $listofSASJBODs          = $list.sasLogicalJBODs
 
@@ -3117,9 +3117,30 @@ Function Generate-LocalStorage-Script
         $logicalDrives       = $cont.logicalDrives
 
          ###
-         $elementArray        = @()
-         $logicalDriveCode    =   ""
+         $listofSASJBODs | % { $dt = $_.driveTechnology ; $_.driveTechnology = if ($dt) {$DriveTypeValues[$dt]} else {$dt} }
+      
+        if ($logicalDrives)
+        {
+            $ldIndex   = $logicalDrives| where deviceSlot -ne 'Embedded'  | % { $_.sasLogicalJBODId}
+            if ($ldIndex)
+            {
+                $JBODList     =  $listofSASJBODs | where {$ldIndex -notcontains $_.id}
+            }
+        }
+        else 
+        {
+            $JBODList     =  $listofSASJBODs 
+        }
 
+        write-host "new JBODList"
+        $JBODList | Out-Host
+
+         ###
+         $elementArray        = @()
+         $logicalDiskCode      =   ""
+
+        $index = @()
+        $JBODList = $NULL  
         if ($logicalDrives)
         {             
             foreach ($ld in $logicalDrives )
@@ -3128,46 +3149,67 @@ Function Generate-LocalStorage-Script
                 $raidLevel        = $ld.raidLevel
                 $bootable         = if ($ld.bootable) {1} else {0} 
                 $sasLogJBODId     = $ld.sasLogicalJBODId
-                $driveNumber      = $sasLogJBODId  
                 $accelerator      = $ld.accelerator
+
+                $name             = $ld.name
+                $numPhysDrives    = $ld.numPhysicalDrives
+                $driveTechnology  = $ld.driveTechnology
+                $driveNumber      = $i++  
                 
                  ## BIG ASUMPTION HERE
                  $driveSelection  = 'SizeAndTechnology'
 
-                # Get Ld attributes from SASlogJBOD
-                $thisld           = $listofSASJBODs | where Id -match  $sasLogJBODId             
-                    $name            = $thisld.name
-                    $numPhysDrives   = $thisld.numPhysicalDrives
-                    $driveMinSizeGB  = $thisld.driveMinSizeGB 
-                    $driveMaxSizeGB  = $thisld.driveMaxSizeGB 
-                    $driveTechnology = $DriveTypeValues[$thisld.driveTechnology]
-                    $eraseData       = if ($thisld.eraseData) {1} else {0} 
+                 $ldParams = ""
+                if ($deviceSlot -ne 'Embedded')
+                {
+                    # Collect SasLogicalJBODID
+                    $index            += $sasLogJBODId
 
-                $logicalDriveCode += @"
+                    # Get Ld attributes from SASlogJBOD
+                    $thisld           = $listofSASJBODs | where Id -match  $sasLogJBODId             
+                        $name            = $thisld.name
+                        $driveNumber     = $thisld.Id  
+                        $numPhysDrives   = $thisld.numPhysicalDrives
+                        $driveMinSizeGB  = $thisld.driveMinSizeGB 
+                        $driveMaxSizeGB  = $thisld.driveMaxSizeGB 
+                        $driveTechnology = $thisld.driveTechnology
+                        $eraseData       = if ($thisld.eraseData) {1} else {0} 
+                    $ldParams            = " -MinDriveSize `$driveMinSizeGB -MaxDriveSize `$driveMaxSizeGB  -eraseDataonDelete `$eraseData -driveSelectionBy `$driveSelection "
+                }
+                else 
+                {
+                    if ($driveTechnology)
+                    {
+                        $driveTechnology = $DriveTypeValues[$driveTechnology]
+                    }  
+                }
+
+
+
+
+                $logicalDiskCode += @"
 `$name                  = '$name'
 `$bootable              = [Boolean]$bootable
 `$raidLevel             = '$raidLevel'
 `$numPhysDrives         = $numPhysDrives
+`$driveTechnology       = '$driveTechnology'
 `$driveMinSizeGB        = $driveMinSizeGB
 `$driveMaxSizeGB        = $driveMaxSizeGB
-`$driveTechnology       = '$driveTechnology'
 `$driveSelection        = '$driveSelection'
 `$eraseData             = [Boolean]$eraseData
 
 
       
 `$ld$driveNumber        =  New-HPOVServerProfileLogicalDisk -Name `$name -raid `$raidLevel -bootable `$bootable ``
--driveType `$driveTechnology  -driveSelection `$driveSelection -eraseDataonDelete `$eraseData  ``
- -numberofDrives `$numPhysDrives  -MinDriveSize `$driveMinSizeGB -MaxDriveSize `$driveMaxSizeGB 
+-driveType `$driveTechnology  $ldParams ``
+ -numberofDrives `$numPhysDrives  
 
 "@
 
                 $elementArray     += "`$ld$driveNumber" 
             }
-        }
-        else # if logicalDrives is NULL, check in SASLogicalJBod for JBOD 
-        {
-     ###TBD
+
+            
         }
 
 
@@ -3185,7 +3227,7 @@ Function Generate-LocalStorage-Script
             {
                 $elementArrayStr    = $elementArray -join $comma
                 $diskControllerCode = @"
-$logicalDriveCode
+$logicalDiskCode
 `$driveList             = @($elementArrayStr)
 `$Controller$i          = new-HPOVServerProfileLogicalDiskController -ControllerID `$deviceSlot ``
 -mode `$mode -initialize:`$initialize  -logicalDisk  `$driveList 
@@ -3204,6 +3246,7 @@ $logicalDriveCode
 `$mode                  = 'RAID'            # Temporarily set to RAID. Query retruns in variable `$mode  which is set to mixed               
 `$initialize            = [Boolean]$initialize
 $diskControllerCode
+
 "@
     } # end foreach
 
@@ -3215,6 +3258,7 @@ $diskControllerCode
             
         # List of local storage connections for profile is
 `$controllerList        = @($ControllerArrayStr)
+
 "@
     }
 
